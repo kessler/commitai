@@ -1,0 +1,35 @@
+# General instructions
+
+1. we are going to create an nodejs module.
+2. this module will export api but will also be installable as a cli tool
+3. the api will be exported from index.mjs
+4. the cli tool is activate using cli.mjs (bin in package.json will point to that)
+5. add shebang to cli.mjs at the start
+
+# Module
+
+1. this module is going to do the following:
+	a. accept a git diff from a stream (in cli that would be process.stdin, in api it's just going to be a stream) and buffer it.
+	b. send the git diff to an llm, along with a prompt that cause the llm to create one or more commit messages and relevant files for each message, in a json format of your choice.
+	c. optionally it will also run "git commit -m 'message' ...files..."
+
+2. dependencies:
+	a. for cli use commander.js latest version
+	b. for llm interaction create a simple abstraction, under the hood it will use different sdks based on user's selection
+	c. implement openai and anthropic only at the moment.
+	d. for configuration purposes, use rc module (by dominic tarr)
+
+3. some configuration is required for the code to work:
+	a. which git to use, this could default to running "which git" (if there is an equivalent command in windows use it otherwise windows will not have a default)
+	b. which llm provider to use (openai or anthropic)
+	c. which model to use
+	d. all configuration can be stored in rc related location but should also be available as an option in commander.js
+
+4. commands:
+	a. each command is implemented in index.mjs and then exposed in cli.mjs with options and such
+	b. here is a brief description of each command:
+		- generate (alias "gen" and/or "g"): accepts the diff, and contact the llm, resulting in the json with the messages and files
+		- commit (alias "c"): uses the json (provided in stdin / stream) and run git commit(s)
+
+
+

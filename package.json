@@ -1,0 +1,39 @@
+{
+  "name": "commitai",
+  "version": "1.0.0",
+  "description": "Generate git commit messages from diffs using LLMs",
+  "keywords": [
+    "commit",
+    "llm",
+    "git",
+    "diff",
+    "ai",
+    "openai",
+    "anthropic",
+    "cli"
+  ],
+  "homepage": "https://github.com/kessler/commitai#readme",
+  "bugs": {
+    "url": "https://github.com/kessler/commitai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kessler/commitai.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Yaniv Kessler",
+  "type": "module",
+  "main": "index.mjs",
+  "bin": {
+    "commitai": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "npx ava"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "rc": "^1.2.8",
+    "openai": "^4.73.0",
+    "@anthropic-ai/sdk": "^0.32.0"
+  }
+}

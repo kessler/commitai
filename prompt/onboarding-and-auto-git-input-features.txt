@@ -1,1 +1,18 @@
-shell-detection.txt
+# general instructions
+
+1. you are updating code to an existing module
+2. the module exports api via index.mjs and exposes a cli tool via cli.mjs (installed via npm i -g commitai)
+
+# new features
+
+1. an onboarding process as part of the cli tool:
+	a. ask the user to select a provider
+	b. ask the user to provide an api key for the previous selected provider
+	c. ask the user to select a model
+		- if the provider has an api endpoint for listing the models, fetch a list and let the user select from it
+		- also allow the user to provide a custom/manual model name
+	d. the config file should be updated with the onboarding results and saved in ~/.config/commitai
+	e. if the file exists, confirm with the user it will be overwritten before writing the new file.
+
+2. automatically combine the output of git status and git diff as part of the gen command:
+	- stdin functionality should still be available but the user will have to specify --stdin option

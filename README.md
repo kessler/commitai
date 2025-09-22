@@ -1,5 +1,7 @@
 # commitai
 
+_module generated with AI_
+
 Generate git commit messages from diffs using LLMs (OpenAI or Anthropic).
 
 ## Installation

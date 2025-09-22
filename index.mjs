@@ -8,6 +8,7 @@ async function streamToString(stream) {
   for await (const chunk of stream) {
     chunks.push(Buffer.from(chunk));
   }
+
   return Buffer.concat(chunks).toString('utf-8');
 }
 
@@ -17,9 +18,8 @@ export async function generate(stream, options = {}) {
   if (!stream) {
     throw new Error('Stream is required');
   }
-
+ 
   const diff = await streamToString(stream);
-
   if (!diff || diff.trim().length === 0) {
     throw new Error('No diff content provided');
   }
@@ -39,7 +39,6 @@ export async function commit(stream, options = {}) {
 
   const jsonStr = await streamToString(stream);
   let data;
-
   try {
     data = JSON.parse(jsonStr);
   } catch (error) {
@@ -72,7 +71,7 @@ export async function commit(stream, options = {}) {
       for (const file of files) {
         execSync(`${gitPath} add "${file}"`, { encoding: 'utf8' });
       }
-
+      console.log(`${gitPath} commit -m "${commitData.message.replace(/"/g, '\\"')}"`)
       const commitResult = execSync(
         `${gitPath} commit -m "${commitData.message.replace(/"/g, '\\"')}"`,
         { encoding: 'utf8' }

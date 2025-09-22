@@ -12,13 +12,45 @@ async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+export function getGitDiffStream(options = {}) {
+  const config = { ...getConfig(), ...options };
+  const gitPath = config.git || 'git';
+
+  try {
+    const gitStatus = execSync(`${gitPath} status --porcelain`, { encoding: 'utf8' });
+    const gitDiff = execSync(`${gitPath} diff --staged`, { encoding: 'utf8' });
+
+    if (!gitDiff || gitDiff.trim().length === 0) {
+      const unstagedDiff = execSync(`${gitPath} diff`, { encoding: 'utf8' });
+
+      if (!unstagedDiff || unstagedDiff.trim().length === 0) {
+        throw new Error('No changes detected. Please stage your changes with "git add" or make some changes first.');
+      }
+
+      console.error('No staged changes found. Using unstaged changes instead.');
+      console.error('Tip: Use "git add" to stage your changes before generating commit messages.\n');
+
+      const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
+      return createReadableStream(combinedOutput);
+    } else {
+      const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
+      return createReadableStream(combinedOutput);
+    }
+  } catch (error) {
+    if (error.message.includes('No changes detected')) {
+      throw error;
+    }
+    throw new Error(`Error running git commands: ${error.message}. Make sure you are in a git repository.`);
+  }
+}
+
 export async function generate(stream, options = {}) {
   const config = { ...getConfig(), ...options };
 
   if (!stream) {
     throw new Error('Stream is required');
   }
- 
+
   const diff = await streamToString(stream);
   if (!diff || diff.trim().length === 0) {
     throw new Error('No diff content provided');
@@ -56,14 +88,14 @@ export async function commit(stream, options = {}) {
 
   for (const commitData of commits) {
     if (!commitData.message) {
-      console.warn('Skipping commit without message');
+      console.error('Skipping commit without message');
       continue;
     }
 
     const files = commitData.files || [];
 
     if (files.length === 0) {
-      console.warn(`Skipping commit "${commitData.message}" - no files specified`);
+      console.error(`Skipping commit "${commitData.message}" - no files specified`);
       continue;
     }
 

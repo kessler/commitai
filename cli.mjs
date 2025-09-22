@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 import { program } from 'commander';
-import { generate, commit, createReadableStream } from './index.mjs';
+import { generate, commit, getGitDiffStream } from './index.mjs';
 import { getConfig } from './lib/config.mjs';
 import { runOnboarding } from './lib/onboarding.mjs';
 import { createReadStream } from 'fs';
-import { execSync } from 'child_process';
 
 program
   .name('commitai')
@@ -43,33 +42,10 @@ program
       if (options.stdin) {
         inputStream = process.stdin;
       } else {
-        const config = { ...getConfig(), ...options };
-        const gitPath = config.git || 'git';
-
         try {
-          const gitStatus = execSync(`${gitPath} status --porcelain`, { encoding: 'utf8' });
-          const gitDiff = execSync(`${gitPath} diff --staged`, { encoding: 'utf8' });
-
-          if (!gitDiff || gitDiff.trim().length === 0) {
-            const unstagedDiff = execSync(`${gitPath} diff`, { encoding: 'utf8' });
-
-            if (!unstagedDiff || unstagedDiff.trim().length === 0) {
-              console.error('No changes detected. Please stage your changes with "git add" or make some changes first.');
-              process.exit(1);
-            }
-
-            console.log('No staged changes found. Using unstaged changes instead.');
-            console.log('Tip: Use "git add" to stage your changes before generating commit messages.\n');
-
-            const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
-            inputStream = createReadableStream(combinedOutput);
-          } else {
-            const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
-            inputStream = createReadableStream(combinedOutput);
-          }
+          inputStream = getGitDiffStream(options);
         } catch (error) {
-          console.error('Error running git commands:', error.message);
-          console.error('Make sure you are in a git repository.');
+          console.error(error.message);
           process.exit(1);
         }
       }

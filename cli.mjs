@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 import { program } from 'commander';
-import { generate, commit, getGitDiffStream } from './index.mjs';
+import { generate, commit, getGitDiff, streamToString } from './index.mjs';
 import { getConfig } from './lib/config.mjs';
 import { runOnboarding } from './lib/onboarding.mjs';
-import { createReadStream } from 'fs';
+import { confirm } from '@inquirer/prompts';
+import tty from 'tty'
+import { openSync } from 'fs'
 
 program
   .name('commitai')
@@ -15,12 +17,7 @@ program
   .command('setup')
   .description('Run interactive setup to configure CommitAI')
   .action(async () => {
-    try {
-      await runOnboarding();
-    } catch (error) {
-      console.error('Error during setup:', error.message);
-      process.exit(1);
-    }
+    await runOnboarding();
   });
 
 program
@@ -36,27 +33,17 @@ program
   .option('--anthropic-api-key <key>', 'Anthropic API key')
   .option('--stdin', 'Read diff from stdin instead of using git commands')
   .action(async (options) => {
-    try {
-      let inputStream;
+    let diff;
 
-      if (options.stdin) {
-        inputStream = process.stdin;
-      } else {
-        try {
-          inputStream = getGitDiffStream(options);
-        } catch (error) {
-          console.error(error.message);
-          process.exit(1);
-        }
-      }
-
-      const result = await generate(inputStream, options);
-      console.log(JSON.stringify(result, null, 2));
-      process.exit(0) // @TODO I still don't know why the process doesn't exit, initial inquiry did not yield anything apparent
-    } catch (error) {
-      console.error('Error:', error.message);
-      process.exit(1);
+    if (options.stdin) {
+      diff = await streamToString(process.stdin);
+    } else {
+      diff = getGitDiff(options);
     }
+    
+    const result = await generate(diff, options);
+    
+    console.log(JSON.stringify(result, null, 2));
   });
 
 program
@@ -64,30 +51,59 @@ program
   .alias('c')
   .description('Create git commits from JSON input')
   .option('-g, --git <path>', 'Path to git executable')
+  .option('--no-confirm', 'Skip confirmation prompts')
   .action(async (options) => {
-    try {
-      const result = await commit(process.stdin, options);
-      
-      for (const commitResult of result.results) {
-        if (commitResult.success) {
-          console.log(`✓ Committed: ${commitResult.message}`);
-          console.log(`  Files: ${commitResult.files.join(', ')}`);
-        } else {
-          console.error(`✗ Failed: ${commitResult.message}`);
-          console.error(`  Error: ${commitResult.error}`);
+    const commitOptions = { ...options };
+    
+    if (options.confirm !== false) {
+      commitOptions.confirmation = async ({ message, files, command }) => {
+        console.log('\n' + '─'.repeat(50));
+        console.log('Commit message:', message);
+        console.log('Files to commit:', files.join(', '));
+        console.log('Command:\n', command);
+        console.log('─'.repeat(50));
+        
+        let input = process.stdin
+        if (!input.isTTY) {
+          const fd = openSync('/dev/tty', 'r+');
+          input = new tty.ReadStream(fd);
         }
+        
+        const answer = await confirm({
+          message: 'Proceed with this commit?'
+        }, { input });
+
+        return answer;
+      }; 
+    }
+
+    const jsonStr = await streamToString(process.stdin);
+    const result = await commit(jsonStr, commitOptions);
+
+    for (const commitResult of result.results) {
+      const displayMessage = commitResult.messages ? commitResult.messages[0] : commitResult.message;
+      if (commitResult.success) {
+        console.log(`✓ Committed: ${displayMessage}`);
+        if (commitResult.messages && commitResult.messages.length > 1) {
+          console.log(`  (with ${commitResult.messages.length - 1}\n${commitResult.messages.length > 2 ? 's' : ''})`);
+        }
+        console.log(`  Files: ${commitResult.files.join(', ')}`);
+      } else if (commitResult.skipped) {
+        console.log(`⊘ Skipped: ${displayMessage}`);
+        console.log(`  Reason: ${commitResult.reason}`);
+      } else {
+        console.error(`✗ Failed: ${displayMessage}`);
+        console.error(`  Error: ${commitResult.error}`);
       }
+    }
 
-      const successful = result.results.filter(r => r.success).length;
-      const failed = result.results.filter(r => !r.success).length;
+    const successful = result.results.filter(r => r.success).length;
+    const failed = result.results.filter(r => !r.success && !r.skipped).length;
+    const skipped = result.results.filter(r => r.skipped).length;
 
-      console.log(`\nSummary: ${successful} successful, ${failed} failed`);
+    console.log(`\nSummary: ${successful} successful, ${failed} failed, ${skipped} skipped`);
 
-      if (failed > 0) {
-        process.exit(1);
-      }
-    } catch (error) {
-      console.error('Error:', error.message);
+    if (failed > 0) {
       process.exit(1);
     }
   });

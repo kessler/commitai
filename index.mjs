@@ -57,7 +57,8 @@ export async function generate(diff, options = {}) {
 
   const provider = createLLMProvider(config);
   const result = await provider.generateCommitMessages(diff);
-  console.error(JSON.stringify(result, null, '\t'))
+  //console.error(JSON.stringify(result, null, '\t'))
+  
   // Reorganize commits to merge overlapping file groups
   if (result.commits && Array.isArray(result.commits)) {
     const fileToCommitsMap = new Map(); // Track which commits each file belongs to

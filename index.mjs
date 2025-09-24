@@ -1,18 +1,16 @@
 import { getConfig } from './lib/config.mjs';
 import { createLLMProvider } from './lib/llm/index.mjs';
 import { execSync } from 'child_process';
-import { Readable } from 'stream';
 
-async function streamToString(stream) {
+export async function streamToString(stream) {
   const chunks = [];
   for await (const chunk of stream) {
     chunks.push(Buffer.from(chunk));
   }
-
   return Buffer.concat(chunks).toString('utf-8');
 }
 
-export function getGitDiffStream(options = {}) {
+export function getGitDiff(options = {}) {
   const config = { ...getConfig(), ...options };
   const gitPath = config.git || 'git';
 
@@ -30,11 +28,9 @@ export function getGitDiffStream(options = {}) {
       console.error('No staged changes found. Using unstaged changes instead.');
       console.error('Tip: Use "git add" to stage your changes before generating commit messages.\n');
 
-      const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
-      return createReadableStream(combinedOutput);
+      return `Git Status:\n${gitStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
     } else {
-      const combinedOutput = `Git Status:\n${gitStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
-      return createReadableStream(combinedOutput);
+      return `Git Status:\n${gitStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
     }
   } catch (error) {
     if (error.message.includes('No changes detected')) {
@@ -44,32 +40,110 @@ export function getGitDiffStream(options = {}) {
   }
 }
 
-export async function generate(stream, options = {}) {
+export async function generate(diff, options = {}) {
   const config = { ...getConfig(), ...options };
 
-  if (!stream) {
-    throw new Error('Stream is required');
+  if (!diff) {
+    throw new Error('Diff content is required');
   }
 
-  const diff = await streamToString(stream);
-  if (!diff || diff.trim().length === 0) {
+  if (typeof diff !== 'string') {
+    throw new Error('Diff must be a string');
+  }
+
+  if (diff.trim().length === 0) {
     throw new Error('No diff content provided');
   }
 
   const provider = createLLMProvider(config);
   const result = await provider.generateCommitMessages(diff);
+  console.error(JSON.stringify(result, null, '\t'))
+  // Reorganize commits to merge overlapping file groups
+  if (result.commits && Array.isArray(result.commits)) {
+    const fileToCommitsMap = new Map(); // Track which commits each file belongs to
+
+    // First pass: map each file to all commits that include it
+    result.commits.forEach((commit, index) => {
+      if (commit.files && commit.message) {
+        commit.files.forEach(file => {
+          if (!fileToCommitsMap.has(file)) {
+            fileToCommitsMap.set(file, new Set());
+          }
+          fileToCommitsMap.get(file).add(index);
+        });
+      }
+    });
+
+    // Second pass: merge commits with overlapping files
+    const mergedGroups = [];
+    const processedCommits = new Set();
+
+    result.commits.forEach((commit, index) => {
+      if (processedCommits.has(index) || !commit.files || !commit.message) {
+        return;
+      }
+
+      // Find all commits that share files with this one
+      const relatedCommitIndices = new Set([index]);
+      const filesToCheck = [...commit.files];
+      const checkedFiles = new Set();
+
+      while (filesToCheck.length > 0) {
+        const file = filesToCheck.pop();
+        if (checkedFiles.has(file)) continue;
+        checkedFiles.add(file);
+
+        const commitIndices = fileToCommitsMap.get(file);
+        if (commitIndices) {
+          commitIndices.forEach(commitIndex => {
+            if (!relatedCommitIndices.has(commitIndex)) {
+              relatedCommitIndices.add(commitIndex);
+              // Add new files from this commit to check for more overlaps
+              const newCommit = result.commits[commitIndex];
+              if (newCommit.files) {
+                newCommit.files.forEach(f => {
+                  if (!checkedFiles.has(f)) {
+                    filesToCheck.push(f);
+                  }
+                });
+              }
+            }
+          });
+        }
+      }
+
+      // Merge all related commits
+      const allFiles = new Set();
+      const allMessages = [];
+
+      relatedCommitIndices.forEach(commitIndex => {
+        const relatedCommit = result.commits[commitIndex];
+        if (relatedCommit.files) {
+          relatedCommit.files.forEach(f => allFiles.add(f));
+        }
+        if (relatedCommit.message) {
+          allMessages.push(relatedCommit.message);
+        }
+        processedCommits.add(commitIndex);
+      });
+
+      if (allFiles.size > 0 && allMessages.length > 0) {
+        mergedGroups.push({
+          files: Array.from(allFiles),
+          messages: allMessages
+        });
+      }
+    });
+
+    return { commits: mergedGroups };
+  }
 
   return result;
 }
 
-export async function commit(stream, options = {}) {
+export async function commit(jsonStr, options = {}) {
   const config = { ...getConfig(), ...options };
 
-  if (!stream) {
-    throw new Error('Stream is required');
-  }
-
-  const jsonStr = await streamToString(stream);
   let data;
   try {
     data = JSON.parse(jsonStr);
@@ -84,41 +158,70 @@ export async function commit(stream, options = {}) {
   }
 
   const gitPath = config.git || 'git';
+  const confirmationFn = options.confirmation;
   const results = [];
 
   for (const commitData of commits) {
-    if (!commitData.message) {
-      console.error('Skipping commit without message');
+    // Handle both old format (message) and new format (messages)
+    const messages = commitData.messages || (commitData.message ? [commitData.message] : []);
+
+    if (messages.length === 0) {
+      console.error('Skipping commit without messages');
       continue;
     }
 
     const files = commitData.files || [];
 
     if (files.length === 0) {
-      console.error(`Skipping commit "${commitData.message}" - no files specified`);
+      console.error(`Skipping commit with messages "${messages.join(', ')}" - no files specified`);
       continue;
+    }
+
+    // Use the first message as the primary commit message, add others as additional context
+    let commitMessage = messages[0];
+    if (messages.length > 1) {
+      // Add alternative messages as part of the commit body
+      commitMessage = messages[0] + '\n' + messages.slice(1).map(m => '- ' + m).join('\n');
+    }
+
+    const commitCommand = `${gitPath} commit -m "${commitMessage.replace(/"/g, '\\"')}" ${files.map(f => `"${f}"`).join(' ')}`;
+
+    if (confirmationFn && typeof confirmationFn === 'function') {
+      const shouldProceed = await confirmationFn({
+        message: commitMessage,
+        files: files,
+        command: commitCommand
+      });
+      
+      if (!shouldProceed) {
+        results.push({
+          success: false,
+          messages: messages,
+          files: files,
+          skipped: true,
+          reason: 'User cancelled'
+        });
+        continue;
+      }
     }
 
     try {
       for (const file of files) {
         execSync(`${gitPath} add "${file}"`, { encoding: 'utf8' });
       }
-      console.log(`${gitPath} commit -m "${commitData.message.replace(/"/g, '\\"')}"`)
-      const commitResult = execSync(
-        `${gitPath} commit -m "${commitData.message.replace(/"/g, '\\"')}"`,
-        { encoding: 'utf8' }
-      );
+
+      const commitResult = execSync(commitCommand, { encoding: 'utf8' });
 
       results.push({
         success: true,
-        message: commitData.message,
+        messages: messages,
         files: files,
         output: commitResult
       });
     } catch (error) {
       results.push({
         success: false,
-        message: commitData.message,
+        messages: messages,
         files: files,
         error: error.message
       });
@@ -126,8 +229,4 @@ export async function commit(stream, options = {}) {
   }
 
   return { results };
-}
-
-export function createReadableStream(content) {
-  return Readable.from(content);
 }

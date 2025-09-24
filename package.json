@@ -31,10 +31,10 @@
     "test": "npx ava"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0",
+    "@anthropic-ai/sdk": "^0.63.1",
     "@inquirer/prompts": "^7.8.6",
-    "commander": "^12.1.0",
-    "openai": "^4.73.0",
+    "commander": "^14.0.1",
+    "openai": "^5.23.0",
     "rc": "^1.2.8"
   }
 }

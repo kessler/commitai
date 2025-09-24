@@ -58,8 +58,8 @@ program
     if (options.confirm !== false) {
       commitOptions.confirmation = async ({ message, files, command }) => {
         console.log('\n' + '─'.repeat(50));
-        console.log('Commit message:', message);
-        console.log('Files to commit:', files.join(', '));
+        console.log('Commit message:\n', message);
+        console.log('Files to commit:\n', files.join(', '));
         console.log('Command:\n', command);
         console.log('─'.repeat(50));
         

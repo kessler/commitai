@@ -17,7 +17,7 @@ Generate intelligent git commit messages from your staged changes using LLMs (Op
 ## Installation
 
 ```bash
-npm install -g commitai
+npm install -g @kessler/commitai
 ```
 
 Or use locally in your project:

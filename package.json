@@ -1,5 +1,5 @@
 {
-  "name": "commitai",
+  "name": "@kessler/commitai",
   "version": "1.1.0",
   "description": "Generate git commit messages from diffs using LLMs",
   "keywords": [

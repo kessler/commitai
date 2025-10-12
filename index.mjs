@@ -10,6 +10,43 @@ export async function streamToString(stream) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+function parseGitStatus(statusOutput) {
+  const files = new Map();
+  const lines = statusOutput.trim().split('\n').filter(line => line.length > 0);
+
+  for (const line of lines) {
+    if (line.length < 3) continue;
+
+    const indexStatus = line[0];
+    const workingStatus = line[1];
+    const filepath = line.substring(3);
+
+    let status = 'unknown';
+
+    // Determine file status based on porcelain format
+    if (indexStatus === 'D' || workingStatus === 'D') {
+      status = 'deleted';
+    } else if (indexStatus === 'A' || workingStatus === 'A') {
+      status = 'added';
+    } else if (indexStatus === 'M' || workingStatus === 'M') {
+      status = 'modified';
+    } else if (indexStatus === 'R' || workingStatus === 'R') {
+      status = 'renamed';
+    } else if (indexStatus === '?' && workingStatus === '?') {
+      status = 'untracked';
+    }
+
+    files.set(filepath, {
+      indexStatus,
+      workingStatus,
+      status,
+      filepath
+    });
+  }
+
+  return files;
+}
+
 export function getGitDiff(options = {}) {
   const config = { ...getConfig(), ...options };
   const gitPath = config.git || 'git';
@@ -17,20 +54,79 @@ export function getGitDiff(options = {}) {
   try {
     const gitStatus = execSync(`${gitPath} status --porcelain`, { encoding: 'utf8' });
     const gitDiff = execSync(`${gitPath} diff --staged`, { encoding: 'utf8' });
+    const gitDiffNameStatus = execSync(`${gitPath} diff --staged --name-status`, { encoding: 'utf8' });
+
+    // Parse the status to get file operations
+    const fileStatuses = parseGitStatus(gitStatus);
+
+    // Create a summary of file operations
+    const deletedFiles = [];
+    const modifiedFiles = [];
+    const addedFiles = [];
+
+    for (const [filepath, fileInfo] of fileStatuses) {
+      if (fileInfo.status === 'deleted' && fileInfo.indexStatus === 'D') {
+        deletedFiles.push(filepath);
+      } else if (fileInfo.status === 'added' && fileInfo.indexStatus === 'A') {
+        addedFiles.push(filepath);
+      } else if (fileInfo.status === 'modified' && fileInfo.indexStatus === 'M') {
+        modifiedFiles.push(filepath);
+      }
+    }
+
+    // Build file status summary
+    let fileStatusSummary = '';
+    if (deletedFiles.length > 0) {
+      fileStatusSummary += `Deleted files:\n${deletedFiles.map(f => '  - ' + f).join('\n')}\n\n`;
+    }
+    if (addedFiles.length > 0) {
+      fileStatusSummary += `Added files:\n${addedFiles.map(f => '  - ' + f).join('\n')}\n\n`;
+    }
+    if (modifiedFiles.length > 0) {
+      fileStatusSummary += `Modified files:\n${modifiedFiles.map(f => '  - ' + f).join('\n')}\n\n`;
+    }
 
     if (!gitDiff || gitDiff.trim().length === 0) {
       const unstagedDiff = execSync(`${gitPath} diff`, { encoding: 'utf8' });
+      const unstagedNameStatus = execSync(`${gitPath} diff --name-status`, { encoding: 'utf8' });
 
-      if (!unstagedDiff || unstagedDiff.trim().length === 0) {
+      // Check for deleted files in unstaged changes
+      const unstagedDeleted = [];
+      const unstagedModified = [];
+      const unstagedAdded = [];
+
+      for (const [filepath, fileInfo] of fileStatuses) {
+        if (fileInfo.status === 'deleted' && fileInfo.workingStatus === 'D') {
+          unstagedDeleted.push(filepath);
+        } else if (fileInfo.status === 'modified' && fileInfo.workingStatus === 'M') {
+          unstagedModified.push(filepath);
+        }
+      }
+
+      if (!unstagedDiff || (unstagedDiff.trim().length === 0 && unstagedDeleted.length === 0)) {
         throw new Error('No changes detected. Please stage your changes with "git add" or make some changes first.');
       }
 
       console.error('No staged changes found. Using unstaged changes instead.');
       console.error('Tip: Use "git add" to stage your changes before generating commit messages.\n');
 
-      return `Git Status:\n${gitStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
+      // Build unstaged file status summary
+      let unstagedFileStatusSummary = '';
+      if (unstagedDeleted.length > 0) {
+        unstagedFileStatusSummary += `Deleted files (unstaged):\n${unstagedDeleted.map(f => '  - ' + f).join('\n')}\n\n`;
+      }
+      if (unstagedModified.length > 0) {
+        unstagedFileStatusSummary += `Modified files (unstaged):\n${unstagedModified.map(f => '  - ' + f).join('\n')}\n\n`;
+      }
+
+      return `Git Status:\n${gitStatus}\n\n${unstagedFileStatusSummary}Git Diff Name Status (Unstaged):\n${unstagedNameStatus}\n\nGit Diff (Unstaged):\n${unstagedDiff}`;
     } else {
-      return `Git Status:\n${gitStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
+      // Check if only deleted files are staged (no diff content)
+      if (gitDiff.trim().length === 0 && deletedFiles.length > 0) {
+        return `Git Status:\n${gitStatus}\n\n${fileStatusSummary}Git Diff Name Status (Staged):\n${gitDiffNameStatus}\n\nNote: Only file deletions are staged (no content diff available)`;
+      }
+
+      return `Git Status:\n${gitStatus}\n\n${fileStatusSummary}Git Diff Name Status (Staged):\n${gitDiffNameStatus}\n\nGit Diff (Staged):\n${gitDiff}`;
     }
   } catch (error) {
     if (error.message.includes('No changes detected')) {
@@ -207,6 +303,7 @@ export async function commit(jsonStr, options = {}) {
     }
 
     try {
+      // Stage all files (git add works for deletions too - it stages the deletion)
       for (const file of files) {
         execSync(`${gitPath} add "${file}"`, { encoding: 'utf8' });
       }
